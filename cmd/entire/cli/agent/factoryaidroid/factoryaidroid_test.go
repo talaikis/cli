@@ -133,43 +133,6 @@ func TestChunkTranscript_RoundTrip(t *testing.T) {
 	}
 }
 
-// --- ParseHookInput tests ---
-
-func TestParseHookInput_Valid(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	input := `{"session_id":"sess-abc","transcript_path":"/tmp/transcript.jsonl"}`
-
-	result, err := ag.ParseHookInput(agent.HookSessionStart, strings.NewReader(input))
-	if err != nil {
-		t.Fatalf("ParseHookInput() error = %v", err)
-	}
-	if result.SessionID != "sess-abc" {
-		t.Errorf("SessionID = %q, want %q", result.SessionID, "sess-abc")
-	}
-	if result.SessionRef != "/tmp/transcript.jsonl" {
-		t.Errorf("SessionRef = %q, want %q", result.SessionRef, "/tmp/transcript.jsonl")
-	}
-}
-
-func TestParseHookInput_Empty(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	_, err := ag.ParseHookInput(agent.HookSessionStart, strings.NewReader(""))
-	if err == nil {
-		t.Error("ParseHookInput() should error on empty input")
-	}
-}
-
-func TestParseHookInput_InvalidJSON(t *testing.T) {
-	t.Parallel()
-	ag := &FactoryAIDroidAgent{}
-	_, err := ag.ParseHookInput(agent.HookSessionStart, strings.NewReader("not json"))
-	if err == nil {
-		t.Error("ParseHookInput() should error on invalid JSON")
-	}
-}
-
 func TestGetSessionDir(t *testing.T) {
 	t.Parallel()
 	ag := &FactoryAIDroidAgent{}

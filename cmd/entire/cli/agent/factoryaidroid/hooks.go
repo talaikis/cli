@@ -36,22 +36,6 @@ const FactorySettingsFileName = "settings.json"
 // metadataDenyRule blocks Factory Droid from reading Entire session metadata
 const metadataDenyRule = "Read(./.entire/metadata/**)"
 
-// GetHookNames returns the hook verbs Factory AI Droid supports.
-// These become subcommands: entire hooks factoryai-droid <verb>
-func (f *FactoryAIDroidAgent) GetHookNames() []string {
-	return []string{
-		HookNameSessionStart,
-		HookNameSessionEnd,
-		HookNameStop,
-		HookNameUserPromptSubmit,
-		HookNamePreToolUse,
-		HookNamePostToolUse,
-		HookNameSubagentStop,
-		HookNamePreCompact,
-		HookNameNotification,
-	}
-}
-
 // entireHookPrefixes are command prefixes that identify Entire hooks (both old and new formats)
 var entireHookPrefixes = []string{
 	"entire ",
@@ -126,8 +110,8 @@ func (f *FactoryAIDroidAgent) InstallHooks(localDev bool, force bool) (int, erro
 		sessionEnd = removeEntireHooks(sessionEnd)
 		stop = removeEntireHooks(stop)
 		userPromptSubmit = removeEntireHooks(userPromptSubmit)
-		preToolUse = removeEntireHooksFromMatchers(preToolUse)
-		postToolUse = removeEntireHooksFromMatchers(postToolUse)
+		preToolUse = removeEntireHooks(preToolUse)
+		postToolUse = removeEntireHooks(postToolUse)
 		preCompact = removeEntireHooks(preCompact)
 	}
 
@@ -320,8 +304,8 @@ func (f *FactoryAIDroidAgent) UninstallHooks() error {
 	sessionEnd = removeEntireHooks(sessionEnd)
 	stop = removeEntireHooks(stop)
 	userPromptSubmit = removeEntireHooks(userPromptSubmit)
-	preToolUse = removeEntireHooksFromMatchers(preToolUse)
-	postToolUse = removeEntireHooksFromMatchers(postToolUse)
+	preToolUse = removeEntireHooks(preToolUse)
+	postToolUse = removeEntireHooks(postToolUse)
 	preCompact = removeEntireHooks(preCompact)
 
 	// Marshal modified hook types back to rawHooks
@@ -421,18 +405,6 @@ func (f *FactoryAIDroidAgent) AreHooksInstalled() bool {
 		hookCommandExists(settings.Hooks.Stop, "go run ${FACTORY_PROJECT_DIR}/cmd/entire/main.go hooks factoryai-droid stop")
 }
 
-// GetSupportedHooks returns the hook types Factory AI Droid supports.
-func (f *FactoryAIDroidAgent) GetSupportedHooks() []agent.HookType {
-	return []agent.HookType{
-		agent.HookSessionStart,
-		agent.HookSessionEnd,
-		agent.HookUserPromptSubmit,
-		agent.HookStop,
-		agent.HookPreToolUse,
-		agent.HookPostToolUse,
-	}
-}
-
 // Helper functions for hook management
 
 func hookCommandExists(matchers []FactoryHookMatcher, command string) bool {
@@ -460,37 +432,14 @@ func hookCommandExistsWithMatcher(matchers []FactoryHookMatcher, matcherName, co
 }
 
 func addHookToMatcher(matchers []FactoryHookMatcher, matcherName, command string) []FactoryHookMatcher {
-	entry := FactoryHookEntry{
-		Type:    "command",
-		Command: command,
-	}
-
-	// If no matcher name, add to a matcher with empty string
-	if matcherName == "" {
-		for i, matcher := range matchers {
-			if matcher.Matcher == "" {
-				matchers[i].Hooks = append(matchers[i].Hooks, entry)
-				return matchers
-			}
-		}
-		return append(matchers, FactoryHookMatcher{
-			Matcher: "",
-			Hooks:   []FactoryHookEntry{entry},
-		})
-	}
-
-	// Find or create matcher with the given name
-	for i, matcher := range matchers {
-		if matcher.Matcher == matcherName {
+	entry := FactoryHookEntry{Type: "command", Command: command}
+	for i := range matchers {
+		if matchers[i].Matcher == matcherName {
 			matchers[i].Hooks = append(matchers[i].Hooks, entry)
 			return matchers
 		}
 	}
-
-	return append(matchers, FactoryHookMatcher{
-		Matcher: matcherName,
-		Hooks:   []FactoryHookEntry{entry},
-	})
+	return append(matchers, FactoryHookMatcher{Matcher: matcherName, Hooks: []FactoryHookEntry{entry}})
 }
 
 // isEntireHook checks if a command is an Entire hook (old or new format)
@@ -520,11 +469,4 @@ func removeEntireHooks(matchers []FactoryHookMatcher) []FactoryHookMatcher {
 		}
 	}
 	return result
-}
-
-// removeEntireHooksFromMatchers removes Entire hooks from tool-use matchers (PreToolUse, PostToolUse)
-// This handles the nested structure where hooks are grouped by tool matcher (e.g., "Task")
-func removeEntireHooksFromMatchers(matchers []FactoryHookMatcher) []FactoryHookMatcher {
-	// Same logic as removeEntireHooks - both work on the same structure
-	return removeEntireHooks(matchers)
 }

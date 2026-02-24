@@ -4,7 +4,6 @@ package factoryaidroid
 import (
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,24 +86,6 @@ func (f *FactoryAIDroidAgent) ChunkTranscript(content []byte, maxSize int) ([][]
 // ReassembleTranscript concatenates JSONL chunks with newlines.
 func (f *FactoryAIDroidAgent) ReassembleTranscript(chunks [][]byte) ([]byte, error) {
 	return agent.ReassembleJSONL(chunks), nil
-}
-
-// GetHookConfigPath returns the path to Factory AI Droid's hook config file.
-func (f *FactoryAIDroidAgent) GetHookConfigPath() string { return ".factory/settings.json" }
-
-// SupportsHooks returns true as Factory AI Droid supports lifecycle hooks.
-func (f *FactoryAIDroidAgent) SupportsHooks() bool { return true }
-
-// ParseHookInput parses Factory AI Droid hook input from stdin.
-func (f *FactoryAIDroidAgent) ParseHookInput(_ agent.HookType, r io.Reader) (*agent.HookInput, error) {
-	raw, err := agent.ReadAndParseHookInput[sessionInfoRaw](r)
-	if err != nil {
-		return nil, err
-	}
-	return &agent.HookInput{
-		SessionID:  raw.SessionID,
-		SessionRef: raw.TranscriptPath,
-	}, nil
 }
 
 // GetSessionID extracts the session ID from hook input.

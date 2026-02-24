@@ -1104,20 +1104,6 @@ func TestFactoryAIDroidHelperMethods(t *testing.T) {
 		}
 	})
 
-	t.Run("GetHookConfigPath returns .factory/settings.json", func(t *testing.T) {
-		t.Parallel()
-
-		ag, _ := agent.Get("factoryai-droid")
-		droid, ok := ag.(*factoryaidroid.FactoryAIDroidAgent)
-		if !ok {
-			t.Fatal("agent is not *factoryaidroid.FactoryAIDroidAgent")
-		}
-		path := droid.GetHookConfigPath()
-
-		if path != ".factory/settings.json" {
-			t.Errorf("GetHookConfigPath() = %q, want %q", path, ".factory/settings.json")
-		}
-	})
 }
 
 // TestFactoryAIDroidSessionMethods verifies ReadSession, WriteSession, and GetSessionDir.

@@ -20,8 +20,19 @@ var (
 )
 
 // HookNames returns the hook verbs Factory AI Droid supports.
+// These become subcommands: entire hooks factoryai-droid <verb>
 func (f *FactoryAIDroidAgent) HookNames() []string {
-	return f.GetHookNames()
+	return []string{
+		HookNameSessionStart,
+		HookNameSessionEnd,
+		HookNameStop,
+		HookNameUserPromptSubmit,
+		HookNamePreToolUse,
+		HookNamePostToolUse,
+		HookNameSubagentStop,
+		HookNamePreCompact,
+		HookNameNotification,
+	}
 }
 
 // ParseHookEvent translates a Factory AI Droid hook into a normalized lifecycle Event.
