@@ -11,6 +11,8 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
 )
 
+const testMainGoFile = "main.go"
+
 func TestBuildCondensedTranscript_UserPrompts(t *testing.T) {
 	lines := []transcript.Line{
 		{
@@ -759,7 +761,7 @@ func TestBuildCondensedTranscriptFromBytes_OpenCodeToolCalls(t *testing.T) {
 	if entries[2].ToolName != "edit" {
 		t.Errorf("entry 2: expected tool name edit, got %s", entries[2].ToolName)
 	}
-	if entries[2].ToolDetail != "main.go" {
+	if entries[2].ToolDetail != testMainGoFile {
 		t.Errorf("entry 2: expected tool detail main.go, got %s", entries[2].ToolDetail)
 	}
 
@@ -912,7 +914,7 @@ func TestBuildCondensedTranscriptFromBytes_DroidUserAndAssistant(t *testing.T) {
 	if entries[2].ToolName != "Write" {
 		t.Errorf("entry 2: expected tool name Write, got %s", entries[2].ToolName)
 	}
-	if entries[2].ToolDetail != "main.go" {
+	if entries[2].ToolDetail != testMainGoFile {
 		t.Errorf("entry 2: expected tool detail main.go, got %s", entries[2].ToolDetail)
 	}
 }
