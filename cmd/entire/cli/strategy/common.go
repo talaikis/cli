@@ -302,16 +302,21 @@ func EnsureMetadataBranch(repo *git.Repository) error {
 	// Check if local branch already exists
 	localRef, err := repo.Reference(refName, true)
 	if err == nil {
-		// If local is an empty orphan and remote has data, update from remote.
-		// This fixes repos where enable ran before the remote had checkpoint data.
 		if remoteErr == nil && localRef.Hash() != remoteRef.Hash() {
+			// Local and remote exist but differ — determine relationship
 			isEmpty, checkErr := isEmptyMetadataBranch(repo, localRef)
 			if checkErr == nil && isEmpty {
+				// Empty orphan — just point to remote
 				ref := plumbing.NewHashReference(refName, remoteRef.Hash())
 				if setErr := repo.Storer.SetReference(ref); setErr != nil {
 					return fmt.Errorf("failed to update metadata branch from remote: %w", setErr)
 				}
 				fmt.Fprintf(os.Stderr, "✓ Updated local branch '%s' from origin\n", paths.MetadataBranchName)
+			} else if checkErr == nil {
+				// Local has real data — check ancestry
+				if err := syncMetadataBranch(repo, refName, localRef, remoteRef); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -388,6 +393,98 @@ func isEmptyMetadataBranch(repo *git.Repository, ref *plumbing.Reference) (bool,
 		return false, fmt.Errorf("failed to get tree: %w", err)
 	}
 	return len(tree.Entries) == 0, nil
+}
+
+// syncMetadataBranch handles the case where local and remote metadata branches both
+// have real data but differ. Uses git merge-base to determine the relationship:
+//   - remote is ancestor of local → already synced, nothing to do
+//   - local is ancestor of remote → fast-forward local to remote
+//   - no ancestor relationship → disconnected histories, merge trees
+func syncMetadataBranch(repo *git.Repository, refName plumbing.ReferenceName, localRef, remoteRef *plumbing.Reference) error {
+	localHash := localRef.Hash().String()
+	remoteHash := remoteRef.Hash().String()
+
+	// Get repo path for git CLI commands
+	wt, err := repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("failed to get worktree: %w", err)
+	}
+	repoPath := wt.Filesystem.Root()
+
+	// Check if remote is ancestor of local (local is ahead — already synced)
+	if isAncestorCLI(repoPath, remoteHash, localHash) {
+		return nil
+	}
+
+	// Check if local is ancestor of remote (local is behind — fast-forward)
+	if isAncestorCLI(repoPath, localHash, remoteHash) {
+		ref := plumbing.NewHashReference(refName, remoteRef.Hash())
+		if err := repo.Storer.SetReference(ref); err != nil {
+			return fmt.Errorf("failed to fast-forward metadata branch: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "✓ Updated local branch '%s' from origin\n", paths.MetadataBranchName)
+		return nil
+	}
+
+	// Disconnected or diverged — merge both trees
+	localCommit, err := repo.CommitObject(localRef.Hash())
+	if err != nil {
+		return fmt.Errorf("failed to get local commit: %w", err)
+	}
+	localTree, err := localCommit.Tree()
+	if err != nil {
+		return fmt.Errorf("failed to get local tree: %w", err)
+	}
+
+	remoteCommit, err := repo.CommitObject(remoteRef.Hash())
+	if err != nil {
+		return fmt.Errorf("failed to get remote commit: %w", err)
+	}
+	remoteTree, err := remoteCommit.Tree()
+	if err != nil {
+		return fmt.Errorf("failed to get remote tree: %w", err)
+	}
+
+	// Flatten both trees and combine — checkpoint shards are unique, no conflicts
+	entries := make(map[string]object.TreeEntry)
+	if err := checkpoint.FlattenTree(repo, localTree, "", entries); err != nil {
+		return fmt.Errorf("failed to flatten local tree: %w", err)
+	}
+	if err := checkpoint.FlattenTree(repo, remoteTree, "", entries); err != nil {
+		return fmt.Errorf("failed to flatten remote tree: %w", err)
+	}
+
+	mergedTreeHash, err := checkpoint.BuildTreeFromEntries(repo, entries)
+	if err != nil {
+		return fmt.Errorf("failed to build merged tree: %w", err)
+	}
+
+	mergeHash, err := createMergeCommitCommon(repo, mergedTreeHash,
+		[]plumbing.Hash{localRef.Hash(), remoteRef.Hash()},
+		"Reconcile local and remote session metadata")
+	if err != nil {
+		return fmt.Errorf("failed to create merge commit: %w", err)
+	}
+
+	ref := plumbing.NewHashReference(refName, mergeHash)
+	if err := repo.Storer.SetReference(ref); err != nil {
+		return fmt.Errorf("failed to update metadata branch: %w", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "✓ Reconciled local branch '%s' with origin\n", paths.MetadataBranchName)
+	return nil
+}
+
+// isAncestorCLI checks if commit A is an ancestor of commit B using git merge-base.
+// Uses the CLI to avoid the depth limit of IsAncestorOf.
+// Returns false if the commits are disconnected (no common ancestor).
+// repoPath should be a path inside the git repository.
+func isAncestorCLI(repoPath, commitA, commitB string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "merge-base", "--is-ancestor", commitA, commitB)
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
 }
 
 // readCheckpointMetadata reads metadata.json from a checkpoint path on entire/checkpoints/v1.

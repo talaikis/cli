@@ -1155,6 +1155,163 @@ func TestEnsureMetadataBranch(t *testing.T) {
 	})
 }
 
+// cloneWithConfig clones bareDir into a new temp directory, configures git identity,
+// and returns the clone path and a git runner function.
+func cloneWithConfig(t *testing.T, bareDir string) (string, func(args ...string)) {
+	t.Helper()
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	cmd := exec.CommandContext(context.Background(), "git", "clone", bareDir, cloneDir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("clone failed: %v\n%s", err, out)
+	}
+	run := func(args ...string) {
+		cmd := exec.CommandContext(context.Background(), "git", args...)
+		cmd.Dir = cloneDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+	run("config", "user.email", "test@test.com")
+	run("config", "user.name", "Test User")
+	return cloneDir, run
+}
+
+func TestEnsureMetadataBranch_ReconcilesDisconnectedBranches(t *testing.T) {
+	t.Parallel()
+
+	bareDir := initBareWithMetadataBranch(t)
+	cloneDir, run := cloneWithConfig(t, bareDir)
+
+	// Create a disconnected local branch with different checkpoint data
+	run("checkout", "--orphan", "temp-orphan")
+	run("rm", "-rf", ".")
+	localCheckpointDir := filepath.Join(cloneDir, "ab", "cdef012345")
+	if err := os.MkdirAll(localCheckpointDir, 0o755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(localCheckpointDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"abcdef012345"}`), 0o644,
+	); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+	run("add", ".")
+	run("commit", "-m", "Checkpoint: abcdef012345")
+	run("branch", "-f", paths.MetadataBranchName, "temp-orphan")
+
+	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	if err != nil {
+		t.Fatalf("failed to open repo: %v", err)
+	}
+
+	if err := EnsureMetadataBranch(repo); err != nil {
+		t.Fatalf("EnsureMetadataBranch() failed: %v", err)
+	}
+
+	// Verify merged tree contains entries from BOTH local and remote
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName(paths.MetadataBranchName), true)
+	if err != nil {
+		t.Fatalf("local branch not found: %v", err)
+	}
+	commit, err := repo.CommitObject(ref.Hash())
+	if err != nil {
+		t.Fatalf("failed to get commit: %v", err)
+	}
+	if len(commit.ParentHashes) != 2 {
+		t.Errorf("expected merge commit with 2 parents, got %d", len(commit.ParentHashes))
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		t.Fatalf("failed to get tree: %v", err)
+	}
+	hasRemoteData := false
+	hasLocalData := false
+	for _, entry := range tree.Entries {
+		if entry.Name == "metadata.json" {
+			hasRemoteData = true
+		}
+		if entry.Name == "ab" {
+			hasLocalData = true
+		}
+	}
+	if !hasRemoteData {
+		t.Error("merged tree missing remote checkpoint data (metadata.json)")
+	}
+	if !hasLocalData {
+		t.Error("merged tree missing local checkpoint data (ab/ shard)")
+	}
+}
+
+func TestEnsureMetadataBranch_FastForwardsWhenBehind(t *testing.T) {
+	t.Parallel()
+
+	bareDir := initBareWithMetadataBranch(t)
+	cloneDir, run := cloneWithConfig(t, bareDir)
+
+	// Create local branch from remote (normal state)
+	repo, err := git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	if err != nil {
+		t.Fatalf("failed to open repo: %v", err)
+	}
+	if err := EnsureMetadataBranch(repo); err != nil {
+		t.Fatalf("first EnsureMetadataBranch() failed: %v", err)
+	}
+
+	// Remember current local hash
+	refName := plumbing.NewBranchReferenceName(paths.MetadataBranchName)
+	localBefore, err := repo.Reference(refName, true)
+	if err != nil {
+		t.Fatalf("local branch not found: %v", err)
+	}
+
+	// Add a second checkpoint to the remote (simulates another machine pushing)
+	run("checkout", paths.MetadataBranchName)
+	secondDir := filepath.Join(cloneDir, "cd", "ef01234567")
+	if err := os.MkdirAll(secondDir, 0o755); err != nil {
+		t.Fatalf("failed to create dir: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(secondDir, "metadata.json"),
+		[]byte(`{"checkpoint_id":"cdef01234567"}`), 0o644,
+	); err != nil {
+		t.Fatalf("failed to write file: %v", err)
+	}
+	run("add", ".")
+	run("commit", "-m", "Checkpoint: cdef01234567")
+	run("push", "origin", paths.MetadataBranchName)
+
+	// Reset local branch back to the old commit (local is now behind remote)
+	if err := repo.Storer.SetReference(
+		plumbing.NewHashReference(refName, localBefore.Hash()),
+	); err != nil {
+		t.Fatalf("failed to reset ref: %v", err)
+	}
+
+	// Re-open to clear caches
+	repo, err = git.PlainOpenWithOptions(cloneDir, &git.PlainOpenOptions{EnableDotGitCommonDir: true})
+	if err != nil {
+		t.Fatalf("failed to reopen repo: %v", err)
+	}
+
+	if err := EnsureMetadataBranch(repo); err != nil {
+		t.Fatalf("second EnsureMetadataBranch() failed: %v", err)
+	}
+
+	// Should have fast-forwarded to remote
+	remoteRef, err := repo.Reference(plumbing.NewRemoteReferenceName("origin", paths.MetadataBranchName), true)
+	if err != nil {
+		t.Fatalf("remote ref not found: %v", err)
+	}
+	localAfter, err := repo.Reference(refName, true)
+	if err != nil {
+		t.Fatalf("local branch not found: %v", err)
+	}
+	if localAfter.Hash() != remoteRef.Hash() {
+		t.Errorf("local was not fast-forwarded to remote: local=%s remote=%s",
+			localAfter.Hash().String()[:7], remoteRef.Hash().String()[:7])
+	}
+}
+
 func TestIsEmptyRepository(t *testing.T) {
 	t.Parallel()
 	t.Run("empty repo returns true", func(t *testing.T) {
