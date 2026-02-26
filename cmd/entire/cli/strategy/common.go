@@ -95,7 +95,7 @@ func EnsureSetup(ctx context.Context) error {
 // IsAncestorOf checks if commit is an ancestor of (or equal to) target.
 // Returns true if target can reach commit by following parent links.
 // Limits search to MaxCommitTraversalDepth commits to avoid excessive traversal.
-func IsAncestorOf(repo *git.Repository, commit, target plumbing.Hash) bool {
+func IsAncestorOf(ctx context.Context, repo *git.Repository, commit, target plumbing.Hash) bool {
 	if commit == target {
 		return true
 	}
@@ -109,6 +109,9 @@ func IsAncestorOf(repo *git.Repository, commit, target plumbing.Hash) bool {
 	found := false
 	count := 0
 	_ = iter.ForEach(func(c *object.Commit) error { //nolint:errcheck // Best-effort search, errors are non-fatal
+		if err := ctx.Err(); err != nil {
+			return err //nolint:wrapcheck // Propagating context cancellation
+		}
 		count++
 		if count > MaxCommitTraversalDepth {
 			return errStop
@@ -248,9 +251,6 @@ const (
 	entireDir          = ".entire"
 	gitDir             = ".git"
 	shadowBranchPrefix = "entire/"
-
-	// DefaultAgentType is the generic fallback agent type name
-	DefaultAgentType = agent.AgentTypeUnknown
 )
 
 // isProtectedPath returns true if relPath is inside a directory that should
@@ -288,22 +288,13 @@ var (
 	protectedDirsCache []string
 )
 
-// isSpecificAgentType returns true if the agent type is a known, specific value
-// (not empty and not the generic "Agent" fallback).
-func isSpecificAgentType(t agent.AgentType) bool {
-	return t != "" && t != DefaultAgentType
-}
-
 // resolveAgentType picks the best agent type from the context and existing state.
-// Priority: existing state (if specific) > context value > default fallback.
+// Priority: existing state > context value.
 func resolveAgentType(ctxAgentType agent.AgentType, state *SessionState) agent.AgentType {
-	if state != nil && isSpecificAgentType(state.AgentType) {
+	if state != nil && state.AgentType != "" {
 		return state.AgentType
 	}
-	if ctxAgentType != "" {
-		return ctxAgentType
-	}
-	return DefaultAgentType
+	return ctxAgentType
 }
 
 // EnsureMetadataBranch creates or updates the local entire/checkpoints/v1 branch.
@@ -1517,12 +1508,8 @@ func IsOnDefaultBranch(repo *git.Repository) (bool, string) {
 // the TranscriptPreparer interface. This ensures transcript files exist before
 // they are read (e.g., OpenCode creates its transcript lazily via `opencode export`).
 // Errors are silently ignored — this is best-effort for hook paths.
-func prepareTranscriptIfNeeded(ctx context.Context, agentType agent.AgentType, transcriptPath string) {
-	if transcriptPath == "" {
-		return
-	}
-	ag, err := agent.GetByAgentType(agentType)
-	if err != nil {
+func prepareTranscriptIfNeeded(ctx context.Context, ag agent.Agent, transcriptPath string) {
+	if ag == nil || transcriptPath == "" {
 		return
 	}
 	if preparer, ok := ag.(agent.TranscriptPreparer); ok {
