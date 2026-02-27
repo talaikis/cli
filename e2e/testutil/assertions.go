@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -56,11 +57,11 @@ func WaitForFileExists(t *testing.T, dir string, glob string, timeout time.Durat
 }
 
 // AssertNewCommits polls until at least `atLeast` new commits exist since setup,
-// or fails after 10 seconds. Polling handles the race where an interactive
+// or fails after 20 seconds. Polling handles the race where an interactive
 // agent's prompt pattern appears before its git commit lands on disk.
 func AssertNewCommits(t *testing.T, s *RepoState, atLeast int) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
 		out := GitOutput(t, s.Dir, "log", "--oneline", s.HeadBefore+"..HEAD")
 		var lines []string
@@ -71,7 +72,7 @@ func AssertNewCommits(t *testing.T, s *RepoState, atLeast int) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("expected at least %d new commit(s), got %d after 10s", atLeast, len(lines))
+			t.Fatalf("expected at least %d new commit(s), got %d after 20s", atLeast, len(lines))
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
@@ -233,6 +234,49 @@ func WaitForCheckpointAdvanceFrom(t *testing.T, dir string, fromRef string, time
 		time.Sleep(200 * time.Millisecond)
 	}
 	t.Fatalf("checkpoint branch did not advance from %s within %s", fromRef[:8], timeout)
+}
+
+// WaitForSessionIdle polls the session state files in .git/entire-sessions/
+// until no session has phase "active", or fails the test after timeout.
+// This handles the race where an agent's prompt pattern appears in the TUI
+// before the turn-end hook has completed (transitioning ACTIVE → IDLE).
+func WaitForSessionIdle(t *testing.T, dir string, timeout time.Duration) {
+	t.Helper()
+	stateDir := filepath.Join(dir, ".git", "entire-sessions")
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(stateDir)
+		if err != nil {
+			// Directory may not exist yet; keep polling
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		anyActive := false
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") || strings.HasSuffix(entry.Name(), ".tmp") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Join(stateDir, entry.Name()))
+			if err != nil {
+				continue
+			}
+			var state struct {
+				Phase string `json:"phase"`
+			}
+			if err := json.Unmarshal(data, &state); err != nil {
+				continue
+			}
+			if state.Phase == "active" {
+				anyActive = true
+				break
+			}
+		}
+		if !anyActive {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("session(s) did not transition to idle within %s", timeout)
 }
 
 // AssertNoCheckpointTrailer asserts the commit does NOT have an Entire-Checkpoint trailer.
