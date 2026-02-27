@@ -35,9 +35,9 @@ jobs:
       - name: Install agent CLI
         run: |
           case "${{ inputs.agent }}" in
-            claude)   curl -fsSL https://claude.ai/install.sh | bash ;;
-            opencode) curl -fsSL https://opencode.ai/install | bash ;;
-            gemini-cli)   npm install -g @google/gemini-cli ;;
+            claude-code) curl -fsSL https://claude.ai/install.sh | bash ;;
+            opencode)    curl -fsSL https://opencode.ai/install | bash ;;
+            gemini-cli)  npm install -g @google/gemini-cli ;;
             factoryai-droid) curl -fsSL https://app.factory.ai/cli | sh ;;
           esac
           echo "$HOME/.local/bin" >> $GITHUB_PATH
