@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 )
 
 func TestCleanPromptForCommit(t *testing.T) {
@@ -189,7 +190,7 @@ func TestGenerateCommitMessage(t *testing.T) {
 	tests := []struct {
 		name      string
 		prompt    string
-		agentType agent.AgentType
+		agentType types.AgentType
 		expected  string
 	}{
 		{

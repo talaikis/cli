@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
+	"github.com/entireio/cli/cmd/entire/cli/agent/types"
 	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 )
 
 // generateCommitMessage creates a commit message from the user's original prompt.
 // If the prompt is empty or cleans to empty, falls back to "<agentType> session updates".
-func generateCommitMessage(originalPrompt string, agentType agent.AgentType) string {
+func generateCommitMessage(originalPrompt string, agentType types.AgentType) string {
 	if originalPrompt != "" {
 		cleaned := cleanPromptForCommit(originalPrompt)
 		if cleaned != "" {
