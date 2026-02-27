@@ -145,6 +145,7 @@ func collectCommitChain(repo *git.Repository, tip plumbing.Hash) ([]*object.Comm
 	var chain []*object.Commit
 	current := tip
 
+	reachedRoot := false
 	for range MaxCommitTraversalDepth {
 		commit, err := repo.CommitObject(current)
 		if err != nil {
@@ -153,9 +154,14 @@ func collectCommitChain(repo *git.Repository, tip plumbing.Hash) ([]*object.Comm
 		chain = append(chain, commit)
 
 		if len(commit.ParentHashes) == 0 {
-			break // Root commit
+			reachedRoot = true
+			break
 		}
 		current = commit.ParentHashes[0]
+	}
+
+	if !reachedRoot {
+		return nil, fmt.Errorf("commit chain exceeded %d commits without reaching root; aborting reconciliation", MaxCommitTraversalDepth)
 	}
 
 	// Reverse to oldest-first
