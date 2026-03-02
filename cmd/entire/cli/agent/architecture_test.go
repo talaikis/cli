@@ -80,10 +80,15 @@ func TestAgentPackages_NoForbiddenImports(t *testing.T) {
 
 				// Check forbidden suffixes
 				rel := strings.TrimPrefix(imp, repoPrefix)
+				isForbidden := false
 				for _, forbidden := range forbiddenSuffixes {
 					if rel == forbidden || strings.HasPrefix(rel, forbidden+"/") {
 						t.Errorf("forbidden import %q — agent packages must not import %s internals", imp, forbidden)
+						isForbidden = true
 					}
+				}
+				if isForbidden {
+					continue
 				}
 
 				// Check it's in the allowed list
@@ -103,14 +108,14 @@ func TestAgentPackages_NoForbiddenImports(t *testing.T) {
 }
 
 // findAgentDir returns the absolute path to cmd/entire/cli/agent/.
+// Go test runner sets cwd to the package directory, so os.Getwd() gives us
+// the agent dir directly.
 func findAgentDir(t *testing.T) string {
 	t.Helper()
-	// Walk up from the test file location to find the repo root.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("os.Getwd: %v", err)
 	}
-	// We're in cmd/entire/cli/agent/ since the test is in that package.
 	return wd
 }
 
@@ -185,6 +190,10 @@ func TestAgentPackages_SelfRegister(t *testing.T) {
 
 	agentDir := findAgentDir(t)
 	agentPkgs := discoverAgentPackages(t, agentDir)
+
+	if len(agentPkgs) == 0 {
+		t.Fatal("no agent packages found — test setup is broken")
+	}
 
 	for _, pkgDir := range agentPkgs {
 		pkgName := filepath.Base(pkgDir)
