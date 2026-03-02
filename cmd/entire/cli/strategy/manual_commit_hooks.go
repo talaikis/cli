@@ -2047,9 +2047,8 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 		return 1 // Count as error - all checkpoints will be skipped
 	}
 
-	// Extract prompts and context from the full transcript
+	// Extract prompts from the full transcript
 	prompts := extractUserPrompts(state.AgentType, string(fullTranscript))
-	contextBytes := generateContextFromPrompts(prompts)
 
 	// Redact secrets before writing — matches WriteCommitted behavior.
 	// The live transcript on disk contains raw content; redaction must happen
@@ -2066,7 +2065,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 	for i, p := range prompts {
 		prompts[i] = redact.String(p)
 	}
-	contextBytes = redact.Bytes(contextBytes)
 
 	// Open repository and create checkpoint store
 	repo, err := OpenRepository(ctx)
@@ -2096,7 +2094,6 @@ func (s *ManualCommitStrategy) finalizeAllTurnCheckpoints(ctx context.Context, s
 			SessionID:    state.SessionID,
 			Transcript:   fullTranscript,
 			Prompts:      prompts,
-			Context:      contextBytes,
 			Agent:        state.AgentType,
 		})
 		if updateErr != nil {

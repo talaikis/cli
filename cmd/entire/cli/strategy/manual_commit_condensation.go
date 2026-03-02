@@ -20,7 +20,6 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/session"
 	"github.com/entireio/cli/cmd/entire/cli/settings"
-	"github.com/entireio/cli/cmd/entire/cli/stringutil"
 	"github.com/entireio/cli/cmd/entire/cli/summarize"
 	"github.com/entireio/cli/cmd/entire/cli/textutil"
 	"github.com/entireio/cli/cmd/entire/cli/transcript"
@@ -58,27 +57,6 @@ func (s *ManualCommitStrategy) listCheckpoints(ctx context.Context) ([]Checkpoin
 			SessionCount:     c.SessionCount,
 			SessionIDs:       c.SessionIDs,
 		})
-	}
-
-	return result, nil
-}
-
-// getCheckpointsForSession returns all checkpoints for a session ID.
-func (s *ManualCommitStrategy) getCheckpointsForSession(ctx context.Context, sessionID string) ([]CheckpointInfo, error) {
-	all, err := s.listCheckpoints(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var result []CheckpointInfo
-	for _, cp := range all {
-		if cp.SessionID == sessionID || strings.HasPrefix(cp.SessionID, sessionID) {
-			result = append(result, cp)
-		}
-	}
-
-	if len(result) == 0 {
-		return nil, fmt.Errorf("no checkpoints for session: %s", sessionID)
 	}
 
 	return result, nil
@@ -274,7 +252,6 @@ func (s *ManualCommitStrategy) CondenseSession(ctx context.Context, repo *git.Re
 		Branch:                      branchName,
 		Transcript:                  sessionData.Transcript,
 		Prompts:                     sessionData.Prompts,
-		Context:                     sessionData.Context,
 		FilesTouched:                sessionData.FilesTouched,
 		CheckpointsCount:            state.StepCount,
 		EphemeralBranch:             shadowBranchName,
@@ -487,8 +464,8 @@ func (s *ManualCommitStrategy) extractSessionData(ctx context.Context, repo *git
 	if fullTranscript != "" {
 		data.Transcript = []byte(fullTranscript)
 		data.FullTranscriptLines = countTranscriptItems(agentType, fullTranscript)
-		data.Prompts = extractUserPrompts(agentType, fullTranscript)
-		data.Context = generateContextFromPrompts(data.Prompts)
+		// Extract only prompts from the current checkpoint portion (not the entire session)
+		data.Prompts = extractCheckpointPrompts(agentType, data.Transcript, checkpointTranscriptStart)
 	}
 
 	// Use tracked files from session state (not all files in tree)
@@ -526,8 +503,8 @@ func (s *ManualCommitStrategy) extractSessionDataFromLiveTranscript(ctx context.
 	fullTranscript := string(liveData)
 	data.Transcript = liveData
 	data.FullTranscriptLines = countTranscriptItems(state.AgentType, fullTranscript)
-	data.Prompts = extractUserPrompts(state.AgentType, fullTranscript)
-	data.Context = generateContextFromPrompts(data.Prompts)
+	// Extract only prompts from the current checkpoint portion (not the entire session)
+	data.Prompts = extractCheckpointPrompts(state.AgentType, data.Transcript, state.CheckpointTranscriptStart)
 
 	// Extract files from transcript since state.FilesTouched may be empty for mid-session commits
 	// (no SaveStep/Stop has been called yet to populate it)
@@ -584,6 +561,40 @@ func countTranscriptItems(agentType types.AgentType, content string) int {
 		allLines = allLines[:len(allLines)-1]
 	}
 	return len(allLines)
+}
+
+// extractCheckpointPrompts extracts user prompts from only the checkpoint portion of a transcript.
+// For JSONL agents (Claude Code, Cursor), checkpointStart is a line offset.
+// For JSON agents (Gemini, OpenCode), checkpointStart is a message index.
+func extractCheckpointPrompts(agentType types.AgentType, fullTranscript []byte, checkpointStart int) []string {
+	if len(fullTranscript) == 0 {
+		return nil
+	}
+
+	// Scope the transcript to the checkpoint portion
+	var scoped []byte
+	switch agentType {
+	case agent.AgentTypeGemini:
+		var err error
+		scoped, err = geminicli.SliceFromMessage(fullTranscript, checkpointStart)
+		if err != nil {
+			scoped = fullTranscript // fallback to full on error
+		}
+	case agent.AgentTypeOpenCode:
+		var err error
+		scoped, err = opencode.SliceFromMessage(fullTranscript, checkpointStart)
+		if err != nil {
+			scoped = fullTranscript // fallback to full on error
+		}
+	default:
+		// Claude Code, Cursor, Unknown — JSONL line offset
+		scoped = transcript.SliceFromLine(fullTranscript, checkpointStart)
+		if scoped == nil {
+			scoped = fullTranscript // fallback to full if offset beyond content
+		}
+	}
+
+	return extractUserPrompts(agentType, string(scoped))
 }
 
 // extractUserPrompts extracts all user prompts from transcript content.
@@ -713,29 +724,6 @@ func extractUserPromptsFromLines(lines []string) []string {
 		}
 	}
 	return prompts
-}
-
-// generateContextFromPrompts generates context.md content from a list of prompts.
-func generateContextFromPrompts(prompts []string) []byte {
-	if len(prompts) == 0 {
-		return nil
-	}
-
-	var buf strings.Builder
-	buf.WriteString("# Session Context\n\n")
-	buf.WriteString("## User Prompts\n\n")
-
-	for i, prompt := range prompts {
-		// Truncate very long prompts for readability.
-		// Use rune-based truncation to avoid splitting multi-byte UTF-8 characters (e.g. CJK).
-		const maxDisplayPromptRunes = 500
-		displayPrompt := stringutil.TruncateRunes(prompt, maxDisplayPromptRunes, "...")
-		fmt.Fprintf(&buf, "### Prompt %d\n\n", i+1)
-		buf.WriteString(displayPrompt)
-		buf.WriteString("\n\n")
-	}
-
-	return []byte(buf.String())
 }
 
 // CondenseSessionByID force-condenses a session by its ID and cleans up.

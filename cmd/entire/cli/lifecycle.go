@@ -357,14 +357,6 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	// Log file changes
 	logFileChanges(ctx, relModifiedFiles, relNewFiles, relDeletedFiles)
 
-	// Create context file
-	contextFile := filepath.Join(sessionDirAbs, paths.ContextFileName)
-	if err := createContextFile(contextFile, commitMessage, sessionID, allPrompts, summary); err != nil {
-		return fmt.Errorf("failed to create context file: %w", err)
-	}
-	logging.Debug(logCtx, "created context file",
-		slog.String("path", sessionDir+"/"+paths.ContextFileName))
-
 	// Get git author
 	author, err := GetGitAuthor(ctx)
 	if err != nil {
@@ -646,34 +638,6 @@ func resolveTranscriptOffset(ctx context.Context, preState *PrePromptState, sess
 	}
 
 	return 0
-}
-
-// createContextFile creates a context.md file for the session checkpoint.
-// This is a unified version that works for all agents.
-func createContextFile(contextFile, commitMessage, sessionID string, prompts []string, summary string) error {
-	var sb strings.Builder
-
-	sb.WriteString("# Session Context\n\n")
-	fmt.Fprintf(&sb, "Session ID: %s\n", sessionID)
-	fmt.Fprintf(&sb, "Commit Message: %s\n\n", commitMessage)
-
-	if len(prompts) > 0 {
-		sb.WriteString("## Prompts\n\n")
-		for i, p := range prompts {
-			fmt.Fprintf(&sb, "### Prompt %d\n\n%s\n\n", i+1, p)
-		}
-	}
-
-	if summary != "" {
-		sb.WriteString("## Summary\n\n")
-		sb.WriteString(summary)
-		sb.WriteString("\n")
-	}
-
-	if err := os.WriteFile(contextFile, []byte(sb.String()), 0o600); err != nil {
-		return fmt.Errorf("failed to write context file: %w", err)
-	}
-	return nil
 }
 
 // parseTranscriptForCheckpointUUID is a thin wrapper around transcript parsing for checkpoint UUID lookup.

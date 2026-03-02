@@ -3290,12 +3290,12 @@ func TestCondenseSession_GeminiMultiCheckpoint(t *testing.T) {
 		t.Error("Full transcript should be stored")
 	}
 
-	// Verify both prompts are present (even though tokens only count from second prompt)
-	if !strings.Contains(content.Prompts, "Add a main function") {
-		t.Error("Prompts should contain first prompt")
+	// Verify only checkpoint-scoped prompts are present (from CheckpointTranscriptStart onwards)
+	if strings.Contains(content.Prompts, "Add a main function") {
+		t.Error("Prompts should NOT contain first prompt (before checkpoint start)")
 	}
 	if !strings.Contains(content.Prompts, "Now add error handling") {
-		t.Error("Prompts should contain second prompt")
+		t.Error("Prompts should contain second prompt (checkpoint-scoped)")
 	}
 }
 

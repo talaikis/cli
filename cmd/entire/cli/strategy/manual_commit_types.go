@@ -61,8 +61,7 @@ type CondenseResult struct {
 type ExtractedSessionData struct {
 	Transcript          []byte   // Full transcript content for the session
 	FullTranscriptLines int      // Total line count in full transcript
-	Prompts             []string // All user prompts from this portion
-	Context             []byte   // Generated context.md content
+	Prompts             []string // User prompts from the current checkpoint portion
 	FilesTouched        []string
 	TokenUsage          *agent.TokenUsage // Token usage calculated from transcript (since CheckpointTranscriptStart)
 }
