@@ -97,6 +97,7 @@ func Detect(ctx context.Context) (Agent, error) {
 // Agent name constants (registry keys)
 const (
 	AgentNameClaudeCode types.AgentName = "claude-code"
+	AgentNameCopilotCLI types.AgentName = "copilot-cli"
 	AgentNameCursor     types.AgentName = "cursor"
 	AgentNameGemini     types.AgentName = "gemini"
 	AgentNameOpenCode   types.AgentName = "opencode"
@@ -105,6 +106,7 @@ const (
 // Agent type constants (type identifiers stored in metadata/trailers)
 const (
 	AgentTypeClaudeCode types.AgentType = "Claude Code"
+	AgentTypeCopilotCLI types.AgentType = "Copilot CLI"
 	AgentTypeCursor     types.AgentType = "Cursor"
 	AgentTypeGemini     types.AgentType = "Gemini CLI"
 	AgentTypeOpenCode   types.AgentType = "OpenCode"
