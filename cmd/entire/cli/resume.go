@@ -208,9 +208,8 @@ func resumeMultipleCheckpoints(ctx context.Context, repo *git.Repository, checkp
 		}
 	}
 
-	strat := GetStrategy(ctx)
-	var allSessions []strategy.RestoredSession
-
+	// Phase 1: Read metadata for all checkpoints
+	var checkpoints []*strategy.CheckpointInfo
 	for _, cpID := range checkpointIDs {
 		metadata, metaErr := strategy.ReadCheckpointMetadata(metadataTree, cpID.Path())
 		if metaErr != nil {
@@ -220,24 +219,36 @@ func resumeMultipleCheckpoints(ctx context.Context, repo *git.Repository, checkp
 			)
 			continue
 		}
+		checkpoints = append(checkpoints, metadata)
+	}
 
+	// Phase 2: Sort by CreatedAt ascending (oldest first → newest writes last and wins on disk)
+	sort.Slice(checkpoints, func(i, j int) bool {
+		return checkpoints[i].CreatedAt.Before(checkpoints[j].CreatedAt)
+	})
+
+	// Phase 3: Iterate sorted checkpoints and restore
+	strat := GetStrategy(ctx)
+	var allSessions []strategy.RestoredSession
+
+	for _, cp := range checkpoints {
 		point := strategy.RewindPoint{
 			IsLogsOnly:   true,
-			CheckpointID: cpID,
-			Agent:        metadata.Agent,
+			CheckpointID: cp.CheckpointID,
+			Agent:        cp.Agent,
 		}
 
 		sessions, restoreErr := strat.RestoreLogsOnly(ctx, point, force)
 		if restoreErr != nil {
 			logging.Debug(logCtx, "skipping checkpoint: restore failed",
-				slog.String("checkpoint_id", cpID.String()),
+				slog.String("checkpoint_id", cp.CheckpointID.String()),
 				slog.String("error", restoreErr.Error()),
 			)
 			continue
 		}
 		if len(sessions) == 0 {
 			logging.Debug(logCtx, "skipping checkpoint: no sessions restored",
-				slog.String("checkpoint_id", cpID.String()),
+				slog.String("checkpoint_id", cp.CheckpointID.String()),
 			)
 			continue
 		}

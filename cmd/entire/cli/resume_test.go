@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -269,15 +270,15 @@ func TestRunResume_UncommittedChanges(t *testing.T) {
 }
 
 // createCheckpointOnMetadataBranch creates a checkpoint on the entire/checkpoints/v1 branch
-// with a default checkpoint ID ("abc123def456"). Returns the checkpoint ID.
+// with a default checkpoint ID ("abc123def456") and default timestamp.
 func createCheckpointOnMetadataBranch(t *testing.T, repo *git.Repository, sessionID string) id.CheckpointID {
 	t.Helper()
-	return createCheckpointOnMetadataBranchWithID(t, repo, sessionID, id.MustCheckpointID("abc123def456"))
+	return createCheckpointOnMetadataBranchFull(t, repo, sessionID, id.MustCheckpointID("abc123def456"), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 }
 
-// createCheckpointOnMetadataBranchWithID creates a checkpoint on the entire/checkpoints/v1 branch
-// with a caller-specified checkpoint ID. Returns the checkpoint ID.
-func createCheckpointOnMetadataBranchWithID(t *testing.T, repo *git.Repository, sessionID string, checkpointID id.CheckpointID) id.CheckpointID {
+// createCheckpointOnMetadataBranchFull creates a checkpoint on the entire/checkpoints/v1 branch
+// with a caller-specified checkpoint ID and timestamp.
+func createCheckpointOnMetadataBranchFull(t *testing.T, repo *git.Repository, sessionID string, checkpointID id.CheckpointID, createdAt time.Time) id.CheckpointID {
 	t.Helper()
 
 	// Get existing metadata branch or create it
@@ -300,8 +301,8 @@ func createCheckpointOnMetadataBranchWithID(t *testing.T, repo *git.Repository, 
 	metadataJSON := fmt.Sprintf(`{
   "checkpoint_id": %q,
   "session_id": %q,
-  "created_at": "2025-01-01T00:00:00Z"
-}`, checkpointID.String(), sessionID)
+  "created_at": %q
+}`, checkpointID.String(), sessionID, createdAt.Format(time.RFC3339))
 
 	// Create blob for metadata
 	blob := repo.Storer.NewEncodedObject()
@@ -546,6 +547,74 @@ func TestDeduplicateSessions(t *testing.T) {
 	})
 }
 
+// TestResumeMultipleCheckpoints_SortsByCreatedAt verifies that resumeMultipleCheckpoints
+// sorts checkpoints by CreatedAt ascending before restoring, so that the newest checkpoint
+// writes last and wins on disk. This fixes the git CLI squash merge bug where trailers
+// appear in reverse chronological order (newest first).
+func TestResumeMultipleCheckpoints_SortsByCreatedAt(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Chdir(tmpDir)
+
+	repo, _, _ := setupResumeTestRepo(t, tmpDir, false)
+
+	// Create checkpoints with different timestamps.
+	// Simulate git CLI squash merge order: newest first in the commit message.
+	t1 := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC) // oldest
+	t2 := time.Date(2025, 1, 1, 11, 0, 0, 0, time.UTC)
+	t3 := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC) // newest
+
+	cpID1 := createCheckpointOnMetadataBranchFull(t, repo, "session-oldest", id.MustCheckpointID("aaa111bbb222"), t1)
+	cpID2 := createCheckpointOnMetadataBranchFull(t, repo, "session-middle", id.MustCheckpointID("ccc333ddd444"), t2)
+	cpID3 := createCheckpointOnMetadataBranchFull(t, repo, "session-newest", id.MustCheckpointID("eee555fff666"), t3)
+
+	// Read metadata in reverse order (simulating git CLI squash merge trailer order)
+	metadataTree, err := strategy.GetMetadataBranchTree(repo)
+	if err != nil {
+		t.Fatalf("Failed to get metadata branch tree: %v", err)
+	}
+
+	// Provide checkpoint IDs in reverse chronological order (newest first)
+	reverseOrderIDs := []id.CheckpointID{cpID3, cpID2, cpID1}
+
+	var checkpoints []*strategy.CheckpointInfo
+	for _, cpID := range reverseOrderIDs {
+		metadata, metaErr := strategy.ReadCheckpointMetadata(metadataTree, cpID.Path())
+		if metaErr != nil {
+			t.Fatalf("Failed to read metadata for %s: %v", cpID, metaErr)
+		}
+		checkpoints = append(checkpoints, metadata)
+	}
+
+	// Sort by CreatedAt ascending (same logic as resumeMultipleCheckpoints)
+	sort.Slice(checkpoints, func(i, j int) bool {
+		return checkpoints[i].CreatedAt.Before(checkpoints[j].CreatedAt)
+	})
+
+	// Verify: after sorting, oldest is first, newest is last
+	if len(checkpoints) != 3 {
+		t.Fatalf("got %d checkpoints, want 3", len(checkpoints))
+	}
+	if checkpoints[0].CheckpointID.String() != cpID1.String() {
+		t.Errorf("checkpoints[0] = %s (want oldest %s)", checkpoints[0].CheckpointID, cpID1)
+	}
+	if checkpoints[1].CheckpointID.String() != cpID2.String() {
+		t.Errorf("checkpoints[1] = %s (want middle %s)", checkpoints[1].CheckpointID, cpID2)
+	}
+	if checkpoints[2].CheckpointID.String() != cpID3.String() {
+		t.Errorf("checkpoints[2] = %s (want newest %s)", checkpoints[2].CheckpointID, cpID3)
+	}
+
+	// Verify timestamps are actually ascending
+	if !checkpoints[0].CreatedAt.Before(checkpoints[1].CreatedAt) {
+		t.Errorf("checkpoints[0].CreatedAt (%v) should be before checkpoints[1].CreatedAt (%v)",
+			checkpoints[0].CreatedAt, checkpoints[1].CreatedAt)
+	}
+	if !checkpoints[1].CreatedAt.Before(checkpoints[2].CreatedAt) {
+		t.Errorf("checkpoints[1].CreatedAt (%v) should be before checkpoints[2].CreatedAt (%v)",
+			checkpoints[1].CreatedAt, checkpoints[2].CreatedAt)
+	}
+}
+
 func TestFindCheckpointInHistory_MultipleCheckpoints(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Chdir(tmpDir)
@@ -608,7 +677,7 @@ func TestFindBranchCheckpoint_SquashMergeMultipleCheckpoints(t *testing.T) {
 	cpID1 := createCheckpointOnMetadataBranch(t, repo, sessionID1)
 
 	sessionID2 := "2025-01-01-session-two"
-	cpID2 := createCheckpointOnMetadataBranchWithID(t, repo, sessionID2, id.MustCheckpointID("def456abc123"))
+	cpID2 := createCheckpointOnMetadataBranchFull(t, repo, sessionID2, id.MustCheckpointID("def456abc123"), time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 
 	// Create a squash merge commit with both checkpoint trailers
 	testFile := filepath.Join(tmpDir, "squash.txt")
