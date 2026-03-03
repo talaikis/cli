@@ -312,7 +312,7 @@ func EnsureMetadataBranch(repo *git.Repository) error {
 				if setErr := repo.Storer.SetReference(ref); setErr != nil {
 					return fmt.Errorf("failed to update metadata branch from remote: %w", setErr)
 				}
-				fmt.Fprintf(os.Stderr, "✓ Updated local branch '%s' from origin\n", paths.MetadataBranchName)
+				fmt.Fprintf(os.Stderr, "[entire] Updated local branch '%s' from origin\n", paths.MetadataBranchName)
 			} else {
 				// Local has real data and differs from remote — if disconnected
 				// (no common ancestor), reconciliation happens at pre-push time
