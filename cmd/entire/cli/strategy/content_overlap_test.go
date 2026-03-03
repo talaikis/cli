@@ -663,6 +663,53 @@ func TestFilesWithRemainingAgentChanges_CacheEquivalence(t *testing.T) {
 	assert.NotContains(t, resultWith, "fileA.txt")
 }
 
+// TestFilesWithRemainingAgentChanges_PhantomFile tests that files tracked in
+// filesTouched but not present in the shadow branch tree are skipped. This
+// happens when an agent's transcript references a file path (e.g. via a
+// write_file tool call) that was never actually created on disk — for example
+// when Gemini tries to write src/types.go but creates src/types/types.go
+// instead. Without this check, phantom files cause infinite carry-forward.
+func TestFilesWithRemainingAgentChanges_PhantomFile(t *testing.T) {
+	t.Parallel()
+	dir := setupGitRepo(t)
+
+	repo, err := git.PlainOpen(dir)
+	require.NoError(t, err)
+
+	// Shadow branch only contains the REAL file (buildTreeWithChanges skips
+	// non-existent files, so the phantom path is never in the tree).
+	createShadowBranchWithContent(t, repo, "phn1234", "e3b0c4", map[string][]byte{
+		"src/types/types.go": []byte("package types\n\ntype User struct{}\n"),
+	})
+
+	// Create the real file on disk and commit it.
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "src", "types"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "src", "types", "types.go"),
+		[]byte("package types\n\ntype User struct{}\n"), 0o644))
+	wt, err := repo.Worktree()
+	require.NoError(t, err)
+	_, err = wt.Add("src/types/types.go")
+	require.NoError(t, err)
+	headCommit, err := wt.Commit("Add types.go", &git.CommitOptions{
+		Author: &object.Signature{Name: "Test", Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(t, err)
+
+	commit, err := repo.CommitObject(headCommit)
+	require.NoError(t, err)
+
+	shadowBranch := checkpoint.ShadowBranchNameForCommit("phn1234", "e3b0c4")
+	committedFiles := map[string]struct{}{"src/types/types.go": {}}
+
+	// filesTouched includes both the real path and a phantom path.
+	remaining := filesWithRemainingAgentChanges(context.Background(), repo, shadowBranch, commit,
+		[]string{"src/types.go", "src/types/types.go"}, committedFiles)
+
+	// src/types.go is not committed AND not in shadow tree → skip.
+	// src/types/types.go is committed with matching content → skip.
+	assert.Empty(t, remaining, "Phantom files not in shadow tree should not be carried forward")
+}
+
 // TestStagedFilesOverlapWithContent_ModifiedFile tests that a modified file
 // (exists in HEAD) always counts as overlap.
 func TestStagedFilesOverlapWithContent_ModifiedFile(t *testing.T) {

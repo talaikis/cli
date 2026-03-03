@@ -434,8 +434,19 @@ func filesWithRemainingAgentChanges(
 	var remaining []string
 
 	for _, filePath := range filesTouched {
-		// If file wasn't committed at all, it definitely has remaining changes
+		// If file wasn't committed, check if it actually exists in the shadow tree.
+		// Transcript parsers capture file paths from all tool calls, including ones
+		// that were attempted but never created (e.g. agent writes src/types.go then
+		// creates src/types/types.go instead). buildTreeWithChanges skips non-existent
+		// files, so the shadow tree is the ground truth. Without this check, phantom
+		// paths cause infinite carry-forward loops.
 		if _, wasCommitted := committedFiles[filePath]; !wasCommitted {
+			if _, err := shadowTree.File(filePath); err != nil {
+				logging.Debug(logCtx, "filesWithRemainingAgentChanges: file not committed and not in shadow tree, skipping",
+					slog.String("file", filePath),
+				)
+				continue
+			}
 			remaining = append(remaining, filePath)
 			logging.Debug(logCtx, "filesWithRemainingAgentChanges: file not committed, keeping",
 				slog.String("file", filePath),
