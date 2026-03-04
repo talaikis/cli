@@ -41,7 +41,7 @@ func TestExtractModifiedFilesFromEvents(t *testing.T) {
 	t.Run("extracts files from tool.execution_complete", func(t *testing.T) {
 		t.Parallel()
 		content := strings.Join(testJSONLLines, "\n") + "\n"
-		events := parseEventsFromBytes([]byte(content))
+		events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 		files := extractModifiedFilesFromEvents(events)
 		if len(files) != 1 {
 			t.Fatalf("expected 1 file, got %d: %v", len(files), files)
@@ -67,7 +67,7 @@ func TestExtractModifiedFilesFromEvents(t *testing.T) {
 			`{"type":"tool.execution_complete","data":{"toolCallId":"tc2","toolTelemetry":{"properties":{"filePaths":"[\"/tmp/test/hello.txt\",\"/tmp/test/world.txt\"]"},"metrics":{"linesAdded":2,"linesRemoved":0}}},"id":"8","timestamp":"2026-03-03T00:00:07Z","parentId":"6"}`,
 		}
 		content := strings.Join(lines, "\n") + "\n"
-		events := parseEventsFromBytes([]byte(content))
+		events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 		files := extractModifiedFilesFromEvents(events)
 		if len(files) != 2 {
 			t.Fatalf("expected 2 deduplicated files, got %d: %v", len(files), files)
@@ -90,7 +90,7 @@ func TestExtractPromptsFromEvents(t *testing.T) {
 			`{"type":"user.message","data":{"content":"now delete it"},"id":"8","timestamp":"2026-03-03T00:01:00Z","parentId":"7"}`,
 		)
 		content := strings.Join(lines, "\n") + "\n"
-		events := parseEventsFromBytes([]byte(content))
+		events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 		prompts := extractPromptsFromEvents(events)
 		if len(prompts) != 2 {
 			t.Fatalf("expected 2 prompts, got %d: %v", len(prompts), prompts)
@@ -143,6 +143,26 @@ func TestGetTranscriptPositionCopilot(t *testing.T) {
 		}
 		if pos != 0 {
 			t.Errorf("expected 0 for nonexistent file, got %d", pos)
+		}
+	})
+
+	t.Run("counts lines without trailing newline", func(t *testing.T) {
+		t.Parallel()
+		ag := &CopilotCLIAgent{}
+		dir := t.TempDir()
+		path := filepath.Join(dir, "events.jsonl")
+		// Write 3 lines WITHOUT a trailing newline
+		content := strings.Join(testJSONLLines[:3], "\n") // no trailing \n
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("failed to write test file: %v", err)
+		}
+
+		pos, err := ag.GetTranscriptPosition(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if pos != 3 {
+			t.Errorf("expected 3 lines (no trailing newline), got %d", pos)
 		}
 	})
 
@@ -290,7 +310,7 @@ func TestParseEventsFromBytes_MalformedLines(t *testing.T) {
 		`{"type":"user.message","data":{"content":"world"},"id":"2","timestamp":"2026-03-03T00:00:01Z","parentId":""}`,
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	events := parseEventsFromBytes([]byte(content))
+	events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 	if len(events) != 2 {
 		t.Fatalf("expected 2 events (malformed line skipped), got %d", len(events))
 	}
@@ -312,7 +332,7 @@ func TestExtractSummary_SkipsEmptyContentAssistantMessages(t *testing.T) {
 		`{"type":"assistant.message","data":{"content":"","toolRequests":[{"toolCallId":"tc2"}]},"id":"2","timestamp":"2026-03-03T00:00:01Z","parentId":""}`,
 	}
 	content := strings.Join(lines, "\n") + "\n"
-	events := parseEventsFromBytes([]byte(content))
+	events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 	summary := extractSummaryFromEvents(events)
 	if summary != "I'll create that file." {
 		t.Errorf("expected summary from earlier message, got %q", summary)
@@ -328,7 +348,7 @@ func TestExtractModifiedFilesFromEvents_EmptyAndMalformedFilePaths(t *testing.T)
 			`{"type":"tool.execution_complete","data":{"toolCallId":"tc1","toolTelemetry":{"properties":{"filePaths":""},"metrics":{"linesAdded":0,"linesRemoved":0}}},"id":"1","timestamp":"2026-03-03T00:00:00Z","parentId":""}`,
 		}
 		content := strings.Join(lines, "\n") + "\n"
-		events := parseEventsFromBytes([]byte(content))
+		events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 		files := extractModifiedFilesFromEvents(events)
 		if len(files) != 0 {
 			t.Errorf("expected 0 files for empty filePaths, got %d: %v", len(files), files)
@@ -341,7 +361,7 @@ func TestExtractModifiedFilesFromEvents_EmptyAndMalformedFilePaths(t *testing.T)
 			`{"type":"tool.execution_complete","data":{"toolCallId":"tc1","toolTelemetry":{"properties":{"filePaths":"not-valid-json"},"metrics":{"linesAdded":1,"linesRemoved":0}}},"id":"1","timestamp":"2026-03-03T00:00:00Z","parentId":""}`,
 		}
 		content := strings.Join(lines, "\n") + "\n"
-		events := parseEventsFromBytes([]byte(content))
+		events, _ := parseEventsFromBytes([]byte(content)) //nolint:errcheck // test input is always valid
 		files := extractModifiedFilesFromEvents(events)
 		if len(files) != 0 {
 			t.Errorf("expected 0 files for malformed filePaths, got %d: %v", len(files), files)

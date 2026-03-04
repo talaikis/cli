@@ -62,13 +62,13 @@ type toolProperties struct {
 
 // parseEventsFromBytes scans JSONL data and returns all parsed events.
 // Malformed lines are silently skipped.
-func parseEventsFromBytes(data []byte) []copilotEvent {
+func parseEventsFromBytes(data []byte) ([]copilotEvent, error) {
 	return parseEventsFromOffset(data, 0)
 }
 
 // parseEventsFromOffset scans JSONL data and returns events starting after
 // the first startOffset lines. Malformed lines are silently skipped.
-func parseEventsFromOffset(data []byte, startOffset int) []copilotEvent {
+func parseEventsFromOffset(data []byte, startOffset int) ([]copilotEvent, error) {
 	var events []copilotEvent
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, bufio.MaxScanTokenSize), 10*1024*1024) // 10 MB max line
@@ -92,7 +92,11 @@ func parseEventsFromOffset(data []byte, startOffset int) []copilotEvent {
 		events = append(events, ev)
 	}
 
-	return events
+	if err := scanner.Err(); err != nil {
+		return events, fmt.Errorf("transcript scanner error: %w", err)
+	}
+
+	return events, nil
 }
 
 // extractModifiedFilesFromEvents collects file paths from tool.execution_complete
@@ -265,7 +269,10 @@ func (c *CopilotCLIAgent) ExtractPrompts(sessionRef string, fromOffset int) ([]s
 		return nil, fmt.Errorf("failed to read transcript: %w", err)
 	}
 
-	events := parseEventsFromOffset(data, fromOffset)
+	events, err := parseEventsFromOffset(data, fromOffset)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse transcript events: %w", err)
+	}
 	return extractPromptsFromEvents(events), nil
 }
 
@@ -276,6 +283,9 @@ func (c *CopilotCLIAgent) ExtractSummary(sessionRef string) (string, error) {
 		return "", fmt.Errorf("failed to read transcript: %w", err)
 	}
 
-	events := parseEventsFromBytes(data)
+	events, err := parseEventsFromBytes(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse transcript events: %w", err)
+	}
 	return extractSummaryFromEvents(events), nil
 }

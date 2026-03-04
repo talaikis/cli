@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -510,6 +511,124 @@ func TestInstallHooks_PreservesEntryLevelFields(t *testing.T) {
 	}
 	if userEntry.Env["OTHER"] != "world" {
 		t.Errorf("env[OTHER] = %q, want %q", userEntry.Env["OTHER"], "world")
+	}
+}
+
+func TestInstallHooks_MalformedExistingFile(t *testing.T) {
+	// Cannot use t.Parallel() because t.Chdir is required.
+	tempDir := t.TempDir()
+	initGitRepo(t, tempDir)
+	t.Chdir(tempDir)
+
+	// Write invalid JSON to the hooks file.
+	githubHooksDir := filepath.Join(tempDir, ".github", "hooks")
+	if err := os.MkdirAll(githubHooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(githubHooksDir, HooksFileName), []byte(`{not valid json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ag := &CopilotCLIAgent{}
+	_, err := ag.InstallHooks(context.Background(), false, false)
+	if err == nil {
+		t.Fatal("InstallHooks() should return error for malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "failed to parse") {
+		t.Errorf("error should mention parsing failure, got: %v", err)
+	}
+}
+
+func TestUninstallHooks_MalformedExistingFile(t *testing.T) {
+	// Cannot use t.Parallel() because t.Chdir is required.
+	tempDir := t.TempDir()
+	initGitRepo(t, tempDir)
+	t.Chdir(tempDir)
+
+	githubHooksDir := filepath.Join(tempDir, ".github", "hooks")
+	if err := os.MkdirAll(githubHooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(githubHooksDir, HooksFileName), []byte(`{not valid json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ag := &CopilotCLIAgent{}
+	err := ag.UninstallHooks(context.Background())
+	if err == nil {
+		t.Fatal("UninstallHooks() should return error for malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "failed to parse") {
+		t.Errorf("error should mention parsing failure, got: %v", err)
+	}
+}
+
+func TestUninstallHooks_PreservesUserHooksInManagedTypes(t *testing.T) {
+	// Cannot use t.Parallel() because t.Chdir is required.
+	tempDir := t.TempDir()
+	initGitRepo(t, tempDir)
+	t.Chdir(tempDir)
+
+	// Write a hooks file with both an Entire hook and a user hook in agentStop.
+	existingJSON := `{
+  "version": 1,
+  "hooks": {
+    "agentStop": [
+      {
+        "type": "command",
+        "bash": "entire hooks copilot-cli agent-stop",
+        "comment": "Entire CLI"
+      },
+      {
+        "type": "command",
+        "bash": "echo user hook",
+        "comment": "User custom"
+      }
+    ]
+  }
+}`
+	githubHooksDir := filepath.Join(tempDir, ".github", "hooks")
+	if err := os.MkdirAll(githubHooksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(githubHooksDir, HooksFileName), []byte(existingJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ag := &CopilotCLIAgent{}
+	if err := ag.UninstallHooks(context.Background()); err != nil {
+		t.Fatalf("UninstallHooks() error = %v", err)
+	}
+
+	// Re-read and verify the user hook survived but the Entire hook was removed.
+	data, err := os.ReadFile(filepath.Join(githubHooksDir, HooksFileName))
+	if err != nil {
+		t.Fatalf("failed to read hooks file: %v", err)
+	}
+
+	var rawFile map[string]json.RawMessage
+	if err := json.Unmarshal(data, &rawFile); err != nil {
+		t.Fatalf("failed to parse hooks file: %v", err)
+	}
+
+	var rawHooks map[string]json.RawMessage
+	if err := json.Unmarshal(rawFile["hooks"], &rawHooks); err != nil {
+		t.Fatalf("failed to parse hooks: %v", err)
+	}
+
+	var entries []CopilotHookEntry
+	if err := json.Unmarshal(rawHooks["agentStop"], &entries); err != nil {
+		t.Fatalf("failed to parse agentStop entries: %v", err)
+	}
+
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry (user hook only), got %d: %+v", len(entries), entries)
+	}
+	if entries[0].Bash != "echo user hook" {
+		t.Errorf("remaining entry bash = %q, want %q", entries[0].Bash, "echo user hook")
+	}
+	if entries[0].Comment != "User custom" {
+		t.Errorf("remaining entry comment = %q, want %q", entries[0].Comment, "User custom")
 	}
 }
 

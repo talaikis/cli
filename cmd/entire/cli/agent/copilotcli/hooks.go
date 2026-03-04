@@ -3,6 +3,7 @@ package copilotcli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/entireio/cli/cmd/entire/cli/agent"
 	"github.com/entireio/cli/cmd/entire/cli/jsonutil"
+	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 )
 
@@ -54,7 +56,8 @@ func (c *CopilotCLIAgent) InstallHooks(ctx context.Context, localDev bool, force
 	var rawHooks map[string]json.RawMessage
 
 	existingData, readErr := os.ReadFile(hooksPath) //nolint:gosec // path is constructed from repo root + fixed path
-	if readErr == nil {
+	switch {
+	case readErr == nil:
 		if err := json.Unmarshal(existingData, &rawFile); err != nil {
 			return 0, fmt.Errorf("failed to parse existing %s: %w", HooksFileName, err)
 		}
@@ -66,10 +69,12 @@ func (c *CopilotCLIAgent) InstallHooks(ctx context.Context, localDev bool, force
 		if _, ok := rawFile["version"]; !ok {
 			rawFile["version"] = json.RawMessage(`1`)
 		}
-	} else {
+	case errors.Is(readErr, os.ErrNotExist):
 		rawFile = map[string]json.RawMessage{
 			"version": json.RawMessage(`1`),
 		}
+	default:
+		return 0, fmt.Errorf("failed to read %s: %w", HooksFileName, readErr)
 	}
 
 	if rawHooks == nil {
@@ -81,7 +86,9 @@ func (c *CopilotCLIAgent) InstallHooks(ctx context.Context, localDev bool, force
 	for _, hookName := range c.HookNames() {
 		key := hookConfigKey[hookName]
 		var entries []CopilotHookEntry
-		parseCopilotHookType(rawHooks, key, &entries)
+		if err := parseCopilotHookType(rawHooks, key, &entries); err != nil {
+			return 0, fmt.Errorf("failed to parse %s hooks: %w", key, err)
+		}
 		hookEntries[hookName] = entries
 	}
 
@@ -124,7 +131,9 @@ func (c *CopilotCLIAgent) InstallHooks(ctx context.Context, localDev bool, force
 	// Marshal modified hook types back into rawHooks
 	for _, hookName := range c.HookNames() {
 		key := hookConfigKey[hookName]
-		marshalCopilotHookType(rawHooks, key, hookEntries[hookName])
+		if err := marshalCopilotHookType(rawHooks, key, hookEntries[hookName]); err != nil {
+			return 0, fmt.Errorf("failed to marshal %s hooks: %w", key, err)
+		}
 	}
 
 	// Marshal hooks and update raw file
@@ -161,7 +170,10 @@ func (c *CopilotCLIAgent) UninstallHooks(ctx context.Context) error {
 	hooksPath := filepath.Join(worktreeRoot, hooksDir, HooksFileName)
 	data, err := os.ReadFile(hooksPath) //nolint:gosec // path is constructed from repo root + fixed path
 	if err != nil {
-		return nil //nolint:nilerr // No hooks file means nothing to uninstall
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // No hooks file means nothing to uninstall
+		}
+		return fmt.Errorf("failed to read %s: %w", HooksFileName, err)
 	}
 
 	var rawFile map[string]json.RawMessage
@@ -183,9 +195,13 @@ func (c *CopilotCLIAgent) UninstallHooks(ctx context.Context) error {
 	for _, hookName := range c.HookNames() {
 		key := hookConfigKey[hookName]
 		var entries []CopilotHookEntry
-		parseCopilotHookType(rawHooks, key, &entries)
+		if err := parseCopilotHookType(rawHooks, key, &entries); err != nil {
+			return fmt.Errorf("failed to parse %s hooks: %w", key, err)
+		}
 		entries = removeEntireHooks(entries)
-		marshalCopilotHookType(rawHooks, key, entries)
+		if err := marshalCopilotHookType(rawHooks, key, entries); err != nil {
+			return fmt.Errorf("failed to marshal %s hooks: %w", key, err)
+		}
 	}
 
 	// Marshal hooks back (preserving unknown hook types)
@@ -220,11 +236,15 @@ func (c *CopilotCLIAgent) AreHooksInstalled(ctx context.Context) bool {
 	hooksPath := filepath.Join(worktreeRoot, hooksDir, HooksFileName)
 	data, err := os.ReadFile(hooksPath) //nolint:gosec // path is constructed from repo root + fixed path
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			logging.Warn(ctx, "copilot-cli: failed to read hooks file", "path", hooksPath, "err", err)
+		}
 		return false
 	}
 
 	var hooksFile CopilotHooksFile
 	if err := json.Unmarshal(data, &hooksFile); err != nil {
+		logging.Warn(ctx, "copilot-cli: failed to parse hooks file", "path", hooksPath, "err", err)
 		return false
 	}
 
@@ -238,7 +258,10 @@ func (c *CopilotCLIAgent) AreHooksInstalled(ctx context.Context) bool {
 		hasEntireHook(hooksFile.Hooks.ErrorOccurred)
 }
 
-// GetSupportedHooks returns the hook types Copilot CLI supports.
+// GetSupportedHooks returns the normalized lifecycle events this agent supports.
+// Note: HookNames() returns 8 hooks (including preToolUse, postToolUse, errorOccurred),
+// but GetSupportedHooks() returns only 6. The extra hooks are registered so `entire hooks install`
+// sets them up, but ParseHookEvent returns nil for them (pass-through, no lifecycle action).
 func (c *CopilotCLIAgent) GetSupportedHooks() []agent.HookType {
 	return []agent.HookType{
 		agent.HookSessionStart,
@@ -251,26 +274,28 @@ func (c *CopilotCLIAgent) GetSupportedHooks() []agent.HookType {
 }
 
 // parseCopilotHookType parses a specific hook type from rawHooks into the target slice.
-// Silently ignores parse errors (leaves target unchanged).
-func parseCopilotHookType(rawHooks map[string]json.RawMessage, hookType string, target *[]CopilotHookEntry) {
+func parseCopilotHookType(rawHooks map[string]json.RawMessage, hookType string, target *[]CopilotHookEntry) error {
 	if data, ok := rawHooks[hookType]; ok {
-		//nolint:errcheck,gosec // Intentionally ignoring parse errors - leave target as nil/empty
-		json.Unmarshal(data, target)
+		if err := json.Unmarshal(data, target); err != nil {
+			return fmt.Errorf("invalid JSON for hook type %s: %w", hookType, err)
+		}
 	}
+	return nil
 }
 
 // marshalCopilotHookType marshals a hook type back into rawHooks.
 // If the slice is empty, removes the key from rawHooks.
-func marshalCopilotHookType(rawHooks map[string]json.RawMessage, hookType string, entries []CopilotHookEntry) {
+func marshalCopilotHookType(rawHooks map[string]json.RawMessage, hookType string, entries []CopilotHookEntry) error {
 	if len(entries) == 0 {
 		delete(rawHooks, hookType)
-		return
+		return nil
 	}
 	data, err := json.Marshal(entries)
 	if err != nil {
-		return // Silently ignore marshal errors (shouldn't happen)
+		return fmt.Errorf("failed to marshal hook type %s: %w", hookType, err)
 	}
 	rawHooks[hookType] = data
+	return nil
 }
 
 // hookBashExists checks if a hook with the given bash command already exists.

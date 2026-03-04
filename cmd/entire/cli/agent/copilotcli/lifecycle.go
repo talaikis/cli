@@ -56,6 +56,7 @@ func (c *CopilotCLIAgent) ParseHookEvent(ctx context.Context, hookName string, s
 	case HookNamePreToolUse, HookNamePostToolUse, HookNameErrorOccurred:
 		return nil, nil //nolint:nilnil // Pass-through hooks have no lifecycle action
 	default:
+		logging.Debug(ctx, "copilot-cli: ignoring unknown hook", "hook", hookName)
 		return nil, nil //nolint:nilnil // Unknown hooks have no lifecycle action
 	}
 }
@@ -132,7 +133,9 @@ func (c *CopilotCLIAgent) parseSubagentStop(stdin io.Reader) (*agent.Event, erro
 // Copilot CLI stores transcripts at ~/.copilot/session-state/<sessionId>/events.jsonl.
 // The userPromptSubmitted hook does not include a transcriptPath field, so we compute it.
 func (c *CopilotCLIAgent) resolveTranscriptRef(ctx context.Context, sessionID string) string {
-	sessionDir, err := c.GetSessionDir(sessionID)
+	// GetSessionDir ignores the repoPath parameter for Copilot CLI since session
+	// state is always in ~/.copilot/session-state/ (not repo-specific).
+	sessionDir, err := c.GetSessionDir("")
 	if err != nil {
 		logging.Warn(ctx, "copilot-cli: failed to resolve transcript path", "err", err)
 		return ""
