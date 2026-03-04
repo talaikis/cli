@@ -14,6 +14,7 @@ import (
 	"github.com/entireio/cli/cmd/entire/cli/logging"
 	"github.com/entireio/cli/cmd/entire/cli/paths"
 	"github.com/entireio/cli/cmd/entire/cli/trailers"
+	"github.com/entireio/cli/perf"
 
 	"github.com/go-git/go-git/v5"
 )
@@ -21,17 +22,22 @@ import (
 // SaveStep saves a checkpoint to the shadow branch.
 // Uses checkpoint.GitStore.WriteTemporary for git operations.
 func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) error {
+	_, openRepoSpan := perf.Start(ctx, "open_repository")
 	repo, err := OpenRepository(ctx)
 	if err != nil {
+		openRepoSpan.End()
 		return fmt.Errorf("failed to open git repository: %w", err)
 	}
+	openRepoSpan.End()
 
 	// Extract session ID from metadata dir
 	sessionID := filepath.Base(step.MetadataDir)
 
 	// Load or initialize session state
+	_, loadStateSpan := perf.Start(ctx, "load_session_state")
 	state, err := s.loadSessionState(ctx, sessionID)
 	if err != nil {
+		loadStateSpan.End()
 		return fmt.Errorf("failed to load session state: %w", err)
 	}
 	// Initialize if state is nil OR BaseCommit is empty (can happen with partial state from warnings)
@@ -39,14 +45,19 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 		agentType := resolveAgentType(step.AgentType, state)
 		state, err = s.initializeSession(ctx, repo, sessionID, agentType, "", "", "") // No transcript/prompt/model in fallback
 		if err != nil {
+			loadStateSpan.End()
 			return fmt.Errorf("failed to initialize session: %w", err)
 		}
 	}
+	loadStateSpan.End()
 
 	// Check if HEAD has changed (e.g., Claude did a rebase via tool call) and migrate if needed
+	_, migrateSpan := perf.Start(ctx, "migrate_shadow_branch")
 	if err := s.migrateAndPersistIfNeeded(ctx, repo, state); err != nil {
+		migrateSpan.End()
 		return err
 	}
+	migrateSpan.End()
 
 	// Get checkpoint store
 	store, err := s.getCheckpointStore()
@@ -80,6 +91,7 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 		slog.String("session_id", sessionID))
 
 	// Use WriteTemporary to create the checkpoint
+	_, writeCheckpointSpan := perf.Start(ctx, "write_temporary_checkpoint")
 	isFirstCheckpointOfSession := state.StepCount == 0
 	result, err := store.WriteTemporary(ctx, checkpoint.WriteTemporaryOptions{
 		SessionID:         sessionID,
@@ -95,6 +107,7 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 		AuthorEmail:       step.AuthorEmail,
 		IsFirstCheckpoint: isFirstCheckpointOfSession,
 	})
+	writeCheckpointSpan.End()
 	if err != nil {
 		return fmt.Errorf("failed to write temporary checkpoint: %w", err)
 	}
@@ -112,6 +125,7 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 	}
 
 	// Update session state
+	_, updateStateSpan := perf.Start(ctx, "update_session_state")
 	state.StepCount++
 
 	// Note: LastCheckpointID is intentionally NOT cleared here.
@@ -136,8 +150,10 @@ func (s *ManualCommitStrategy) SaveStep(ctx context.Context, step StepContext) e
 
 	// Save updated state
 	if err := s.saveSessionState(ctx, state); err != nil {
+		updateStateSpan.End()
 		return fmt.Errorf("failed to save session state: %w", err)
 	}
+	updateStateSpan.End()
 
 	if !branchExisted {
 		logging.Info(logging.WithComponent(ctx, "checkpoint"), "created shadow branch and committed changes",
