@@ -1843,8 +1843,7 @@ func TestPostCommit_IdleSessionEmptyFilesTouched_NotCondensed(t *testing.T) {
 // PostCommit for an IDLE session with AgentType=ClaudeCode and a TranscriptPath
 // completes quickly without hitting the 3s sentinel timeout in PrepareTranscript.
 //
-// Before the fix, extractNewModifiedFilesFromLiveTranscript and
-// extractModifiedFilesFromLiveTranscript called PrepareTranscript unconditionally,
+// Before the fix, the transcript extraction functions called PrepareTranscript unconditionally,
 // which triggered waitForTranscriptFlush (3s timeout) even for idle/ended sessions
 // where the transcript was already fully flushed.
 //

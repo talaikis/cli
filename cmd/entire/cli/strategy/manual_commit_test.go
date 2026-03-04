@@ -3546,7 +3546,7 @@ func TestCondenseSession_FilesTouchedNoFallback_NoOverlap(t *testing.T) {
 }
 
 // TestExtractFilesFromLiveTranscript_RespectsOffset verifies that after condensation
-// sets CheckpointTranscriptStart = N, extractFilesFromLiveTranscript only returns
+// sets CheckpointTranscriptStart = N, resolveFilesTouched only returns
 // files from messages at index N and beyond, not from the beginning.
 //
 // This is a regression test for a bug where compaction events (pre-compress hooks)
@@ -3591,15 +3591,15 @@ func TestExtractFilesFromLiveTranscript_RespectsOffset(t *testing.T) {
 	}
 
 	// With correct offset (4): should only find green.md
-	files := s.extractFilesFromLiveTranscript(context.Background(), state)
+	files := s.resolveFilesTouched(context.Background(), state)
 	if len(files) != 1 || files[0] != "docs/green.md" {
-		t.Errorf("extractFilesFromLiveTranscript(offset=4) = %v, want [docs/green.md]", files)
+		t.Errorf("resolveFilesTouched(offset=4) = %v, want [docs/green.md]", files)
 	}
 
 	// With reset offset (0): would incorrectly find all 3 files (the bug)
 	state.CheckpointTranscriptStart = 0
-	allFiles := s.extractFilesFromLiveTranscript(context.Background(), state)
+	allFiles := s.resolveFilesTouched(context.Background(), state)
 	if len(allFiles) != 3 {
-		t.Errorf("extractFilesFromLiveTranscript(offset=0) got %d files, want 3: %v", len(allFiles), allFiles)
+		t.Errorf("resolveFilesTouched(offset=0) got %d files, want 3: %v", len(allFiles), allFiles)
 	}
 }
