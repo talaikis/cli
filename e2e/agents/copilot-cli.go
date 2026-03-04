@@ -16,6 +16,7 @@ func init() {
 		return
 	}
 	Register(&CopilotCLI{})
+	RegisterGate("copilot-cli", 4)
 }
 
 type CopilotCLI struct{}
