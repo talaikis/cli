@@ -191,7 +191,7 @@ func resumeFromCurrentBranch(ctx context.Context, branchName string, force bool)
 		return checkRemoteMetadata(ctx, repo, checkpointID)
 	}
 
-	return resumeSession(ctx, metadata.SessionID, checkpointID, force)
+	return resumeSession(ctx, metadata, force)
 }
 
 // resolveLatestCheckpoint reads metadata for each checkpoint ID and returns
@@ -431,28 +431,17 @@ func checkRemoteMetadata(ctx context.Context, repo *git.Repository, checkpointID
 	}
 
 	// Now resume the session with the fetched metadata
-	return resumeSession(ctx, metadata.SessionID, checkpointID, false)
+	return resumeSession(ctx, metadata, false)
 }
 
 // resumeSession restores and displays the resume command for a specific session.
 // For multi-session checkpoints, restores ALL sessions and shows commands for each.
 // If force is false, prompts for confirmation when local logs have newer timestamps.
-func resumeSession(ctx context.Context, sessionID string, checkpointID id.CheckpointID, force bool) error {
-	// Read checkpoint metadata first to get agent type (matching rewind pattern)
-	repo, err := openRepository(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to open repository: %w", err)
-	}
-
-	metadataTree, err := strategy.GetMetadataBranchTree(repo)
-	if err != nil {
-		return fmt.Errorf("failed to get metadata branch: %w", err)
-	}
-
-	metadata, err := strategy.ReadCheckpointMetadata(metadataTree, checkpointID.Path())
-	if err != nil {
-		return fmt.Errorf("failed to read checkpoint metadata: %w", err)
-	}
+// The caller must provide the already-resolved checkpoint metadata to avoid redundant lookups
+// and to support both local and remote metadata trees.
+func resumeSession(ctx context.Context, metadata *strategy.CheckpointInfo, force bool) error {
+	checkpointID := metadata.CheckpointID
+	sessionID := metadata.SessionID
 
 	// Resolve agent from checkpoint metadata (same as rewind)
 	ag, err := strategy.ResolveAgentForRewind(metadata.Agent)
