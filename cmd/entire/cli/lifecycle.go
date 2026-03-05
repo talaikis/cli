@@ -50,6 +50,8 @@ func DispatchLifecycleEvent(ctx context.Context, ag agent.Agent, event *agent.Ev
 		return handleLifecycleSubagentStart(ctx, ag, event)
 	case agent.SubagentEnd:
 		return handleLifecycleSubagentEnd(ctx, ag, event)
+	case agent.ModelUpdate:
+		return handleLifecycleModelUpdate(ctx, ag, event)
 	default:
 		return fmt.Errorf("unknown lifecycle event type: %d", event.Type)
 	}
@@ -94,6 +96,14 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 		}
 	}
 
+	// Store model hint if the agent provided model info on SessionStart
+	if event.Model != "" {
+		if err := strategy.StoreModelHint(ctx, event.SessionID, event.Model); err != nil {
+			logging.Warn(logCtx, "failed to store model hint on session start",
+				slog.String("error", err.Error()))
+		}
+	}
+
 	// Fire EventSessionStart for the current session (if state exists).
 	if state, loadErr := strategy.LoadSessionState(ctx, event.SessionID); loadErr != nil {
 		logging.Warn(logCtx, "failed to load session state on start",
@@ -108,6 +118,47 @@ func handleLifecycleSessionStart(ctx context.Context, ag agent.Agent, event *age
 			logging.Warn(logCtx, "failed to update session state on start",
 				slog.String("error", saveErr.Error()))
 		}
+	}
+
+	return nil
+}
+
+// handleLifecycleModelUpdate persists the model name for the current session.
+//
+// If the session state file already exists (e.g., Gemini's BeforeModel fires
+// after TurnStart), the model is written directly to state.ModelName — no hint
+// file needed. Otherwise falls back to StoreModelHint for cross-process
+// persistence (see its doc comment for the full rationale).
+func handleLifecycleModelUpdate(ctx context.Context, ag agent.Agent, event *agent.Event) error {
+	logCtx := logging.WithAgent(logging.WithComponent(ctx, "lifecycle"), ag.Name())
+	logging.Info(logCtx, "model-update",
+		slog.String("session_id", event.SessionID),
+		slog.String("model", event.Model),
+	)
+
+	if event.SessionID == "" || event.Model == "" {
+		return nil
+	}
+
+	// Prefer writing directly to session state when it exists
+	state, loadErr := strategy.LoadSessionState(ctx, event.SessionID)
+	if loadErr != nil {
+		logging.Debug(logCtx, "could not load session state for model update, using hint file",
+			slog.String("error", loadErr.Error()))
+	}
+	if loadErr == nil && state != nil {
+		state.ModelName = event.Model
+		if saveErr := strategy.SaveSessionState(ctx, state); saveErr != nil {
+			logging.Warn(logCtx, "failed to update session state with model",
+				slog.String("error", saveErr.Error()))
+		}
+		return nil
+	}
+
+	// State doesn't exist yet (or failed to load) — use hint file (see StoreModelHint doc)
+	if err := strategy.StoreModelHint(ctx, event.SessionID, event.Model); err != nil {
+		logging.Warn(logCtx, "failed to store model hint",
+			slog.String("error", err.Error()))
 	}
 
 	return nil
@@ -130,6 +181,15 @@ func handleLifecycleTurnStart(ctx context.Context, ag agent.Agent, event *agent.
 	}
 	if err := validation.ValidateSessionID(sessionID); err != nil {
 		return fmt.Errorf("invalid %s event: %w", event.Type, err)
+	}
+
+	// Fill model from hint file if the agent didn't provide it on this hook
+	if event.Model == "" {
+		if hint := strategy.LoadModelHint(ctx, sessionID); hint != "" {
+			event.Model = hint
+			logging.Debug(logCtx, "loaded model from hint file",
+				slog.String("model", hint))
+		}
 	}
 
 	// Capture pre-prompt state (including transcript position via TranscriptAnalyzer)
@@ -191,6 +251,15 @@ func handleLifecycleTurnEnd(ctx context.Context, ag agent.Agent, event *agent.Ev
 	sessionID := event.SessionID
 	if sessionID == "" {
 		sessionID = unknownSessionID
+	}
+
+	// Fill model from hint file if the agent didn't provide it on this hook
+	if event.Model == "" && sessionID != unknownSessionID {
+		if hint := strategy.LoadModelHint(ctx, sessionID); hint != "" {
+			event.Model = hint
+			logging.Debug(logCtx, "loaded model from hint file",
+				slog.String("model", hint))
+		}
 	}
 
 	transcriptRef := event.SessionRef
