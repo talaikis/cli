@@ -564,16 +564,23 @@ func TestLogsOnlyRewind_SquashMergeMultipleCheckpoints(t *testing.T) {
 		t.Fatalf("Failed to read Claude project dir: %v", err)
 	}
 
-	var transcriptFound bool
+	var transcriptFile string
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".jsonl") {
-			transcriptFound = true
+			transcriptFile = filepath.Join(env.ClaudeProjectDir, entry.Name())
 			break
 		}
 	}
 
-	if !transcriptFound {
-		t.Error("Expected transcript to be restored after logs-only rewind of squash merge commit")
+	if transcriptFile == "" {
+		t.Fatal("Expected transcript to be restored after logs-only rewind of squash merge commit")
+	}
+
+	// Verify the restored transcript belongs to session 2 (the latest checkpoint),
+	// not session 1. Session 2's transcript contains "goodbye" content.
+	transcriptContent := env.ReadFileAbsolute(transcriptFile)
+	if !strings.Contains(transcriptContent, "goodbye") {
+		t.Errorf("Restored transcript should contain session 2 content ('goodbye'), got: %s", transcriptContent)
 	}
 }
 
