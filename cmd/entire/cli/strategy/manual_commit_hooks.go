@@ -799,6 +799,7 @@ func (s *ManualCommitStrategy) PostCommit(ctx context.Context) error { //nolint:
 
 	// Find all active sessions for this worktree
 	sessions, err := s.findSessionsForWorktree(ctx, worktreePath)
+	findSessionsSpan.RecordError(err)
 	findSessionsSpan.End()
 
 	if err != nil || len(sessions) == 0 {
