@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Replaced O(n) go-git tree walks with `git diff-tree` in post-commit hook for faster commits ([#594](https://github.com/entireio/cli/pull/594))
+- Replaced O(N) go-git tree walks with `git diff-tree` in post-commit hook for faster commits ([#594](https://github.com/entireio/cli/pull/594))
 - Removed `context.md` and scoped `prompt.txt` to checkpoint-only prompts; prompt source of truth is now shadow branch/filesystem, never transcript ([#572](https://github.com/entireio/cli/pull/572))
 - Consolidated transcript file extraction behind `resolveFilesTouched` and `hasNewTranscriptWork` ([#597](https://github.com/entireio/cli/pull/597))
 - Reconcile disconnected local/remote metadata branches automatically at read/write time and during `entire enable` ([#533](https://github.com/entireio/cli/pull/533))
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Droid E2E tests stabilized for CI ([#607](https://github.com/entireio/cli/pull/607))
 - E2E tests show rerun command on failure ([#621](https://github.com/entireio/cli/pull/621))
 - Added "Git in Tests" section to CLAUDE.md ([#625](https://github.com/entireio/cli/pull/625))
-- Flaky external agent test fix with ETXTBSY retry ([#638](https://github.com/entireio/cli/pull/638))
+- Flaky external agent test fix with `ETXTBSY` retry ([#638](https://github.com/entireio/cli/pull/638))
 - E2E workflow dynamically builds agent matrix for single-agent dispatch ([#609](https://github.com/entireio/cli/pull/609), [#616](https://github.com/entireio/cli/pull/616))
 - E2E test failure alerting on main branch ([#603](https://github.com/entireio/cli/pull/603))
 - tmux PATH propagation in E2E interactive tests ([#629](https://github.com/entireio/cli/pull/629))
