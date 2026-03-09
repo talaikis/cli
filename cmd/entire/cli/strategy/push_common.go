@@ -136,7 +136,8 @@ func fetchAndMergeSessionsCommon(ctx context.Context, remote, branchName string)
 	defer cancel()
 
 	// Use git CLI for fetch (go-git's fetch can be tricky with auth)
-	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, branchName)
+	refSpec := fmt.Sprintf("+refs/heads/%s:refs/remotes/%s/%s", branchName, remote, branchName)
+	fetchCmd := exec.CommandContext(ctx, "git", "fetch", remote, refSpec)
 	fetchCmd.Stdin = nil
 	if output, err := fetchCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("fetch failed: %s", output)
